@@ -1,19 +1,24 @@
 [package]
-name = "term-table"
-version = "1.3.2"
-authors = ["Ryan Bluth <ryanbluth93@gmail.com>"]
-description = "Tables for CLI apps"
+name = "term-data-table"
+version = "0.1.0"
+authors = ["Ryan Bluth <ryanbluth93@gmail.com>", "Richard Dodd <richard.o.dodd@gmail.com>"]
+description = "Tables to render data in CLI apps"
 license = "MIT"
-repository = "https://github.com/RyanBluth/term-table-rs"
+repository = "https://github.com/derekdreery/term-data-table"
 readme = "README.md"
 categories = ["command-line-interface"]
 keywords = ["table", "cli", "terminal"]
-edition = "2018"
+edition = "2021"
+include = ["src", "Cargo.toml", "LICENSE"]
 
 [dependencies]
 lazy_static = "1"
 regex = "1"
 unicode-width = "0.1"
+term-data-table-derive = { version = "0.1.0", path = "term-data-table-derive" }
 
 [dev-dependencies]
 pretty_assertions = "0.6.1"
+
+[workspace]
+members = [".", "term-data-table-derive"]

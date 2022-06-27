@@ -1,11 +1,8 @@
 use lazy_static;
 use regex::Regex;
-use std::borrow::Cow;
-use std::cmp;
-use std::collections::HashSet;
+use std::{borrow::Cow, cmp, collections::HashSet};
 
-use unicode_width::UnicodeWidthChar;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Represents the horizontal alignment of content within a cell.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,64 +19,67 @@ pub enum Alignment {
 ///`pad_content` will add a space to either side of the cell's content.AsRef
 #[derive(Debug, Clone)]
 pub struct TableCell<'data> {
-    pub data: Cow<'data, str>,
-    pub col_span: usize,
-    pub alignment: Alignment,
-    pub pad_content: bool,
+    pub(crate) data: Cow<'data, str>,
+    pub(crate) col_span: usize,
+    pub(crate) alignment: Alignment,
+    pub(crate) pad_content: bool,
 }
 
-impl<'data> TableCell<'data> {
-    pub fn new<T>(data: T) -> TableCell<'data>
-    where
-        T: ToString,
-    {
+impl<'data> Default for TableCell<'data> {
+    fn default() -> Self {
         Self {
-            data: data.to_string().into(),
+            data: Cow::Borrowed(""),
             col_span: 1,
             alignment: Alignment::Left,
             pad_content: true,
         }
     }
+}
 
-    pub fn new_with_col_span<T>(data: T, col_span: usize) -> TableCell<'data>
-    where
-        T: ToString,
-    {
+impl<'data> TableCell<'data> {
+    fn owned(data: String) -> TableCell<'data> {
         Self {
-            data: data.to_string().into(),
-            alignment: Alignment::Left,
-            pad_content: true,
-            col_span,
+            data: Cow::Owned(data),
+            ..Default::default()
         }
     }
 
-    pub fn new_with_alignment<T>(data: T, col_span: usize, alignment: Alignment) -> TableCell<'data>
-    where
-        T: ToString,
-    {
+    /// Special builder that is slightly more efficient than using `From<String>`.
+    fn borrowed(data: &'data str) -> Self {
         Self {
-            data: data.to_string().into(),
-            pad_content: true,
-            col_span,
-            alignment,
+            data: Cow::Borrowed(data.as_ref()),
+            ..Default::default()
         }
     }
 
-    pub fn new_with_alignment_and_padding<T>(
-        data: T,
-        col_span: usize,
-        alignment: Alignment,
-        pad_content: bool,
-    ) -> TableCell<'data>
-    where
-        T: ToString,
-    {
-        Self {
-            data: data.to_string().into(),
-            col_span,
-            alignment,
-            pad_content,
-        }
+    pub fn with_col_span(mut self, col_span: usize) -> Self {
+        self.set_col_span(col_span);
+        self
+    }
+
+    pub fn set_col_span(&mut self, col_span: usize) -> &mut Self {
+        self.col_span = col_span;
+        self
+    }
+
+    pub fn with_alignment(mut self, alignment: Alignment) -> Self {
+        self.set_alignment(alignment);
+        self
+    }
+
+    pub fn set_alignment(&mut self, alignment: Alignment) -> &mut Self {
+        self.alignment = alignment;
+        self
+    }
+
+    pub fn with_padding(mut self, padding: bool) -> Self {
+        self.set_padding(padding);
+        self
+    }
+
+    pub fn set_padding(&mut self, padding: bool) -> &mut Self {
+        self.pad_content = padding;
+        self
     }
 
     /// Calculates the width of the cell.
@@ -151,12 +151,21 @@ impl<'data> TableCell<'data> {
     }
 }
 
-impl<'data, T> From<T> for TableCell<'data>
-where
-    T: ToString,
-{
-    fn from(other: T) -> Self {
-        TableCell::new(other)
+impl<'data> From<String> for TableCell<'data> {
+    fn from(other: String) -> Self {
+        TableCell::owned(other)
+    }
+}
+
+impl<'data> From<&'data String> for TableCell<'data> {
+    fn from(other: &'data String) -> Self {
+        TableCell::borrowed(other)
+    }
+}
+
+impl<'data> From<&'data str> for TableCell<'data> {
+    fn from(other: &'data str) -> Self {
+        TableCell::borrowed(other)
     }
 }
 

@@ -1,18 +1,34 @@
-use crate::table_cell::{string_width, Alignment, TableCell};
-use crate::{RowPosition, TableStyle};
-use std::cmp::max;
+use crate::{
+    table_cell::{string_width, Alignment, TableCell},
+    RowPosition, TableStyle,
+};
+use std::{cmp::max, fmt};
 use unicode_width::UnicodeWidthChar;
 
 /// A set of table cells
 #[derive(Debug, Clone)]
 pub struct Row<'data> {
-    pub cells: Vec<TableCell<'data>>,
-    /// Whether the row should have a top boarder or not
-    pub has_separator: bool,
+    pub(crate) cells: Vec<TableCell<'data>>,
+    /// Whether the row should have a top border or not
+    pub(crate) has_separator: bool,
+}
+
+impl<'data> Default for Row<'data> {
+    fn default() -> Self {
+        Self {
+            cells: vec![],
+            has_separator: true,
+        }
+    }
 }
 
 impl<'data> Row<'data> {
-    pub fn new<I, T>(cells: I) -> Row<'data>
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    /*
+    pub fn from_cells<I, T>(cells: I) -> Row<'data>
     where
         T: Into<TableCell<'data>>,
         I: IntoIterator<Item = T>,
@@ -27,12 +43,30 @@ impl<'data> Row<'data> {
         }
 
         row
+    }*/
+
+    pub fn with_separator(mut self, has_separator: bool) -> Self {
+        self.has_separator = has_separator;
+        self
+    }
+
+    pub fn add_cell(&mut self, cell: impl Into<TableCell<'data>>) -> &mut Self {
+        self.cells.push(cell.into());
+        self
+    }
+
+    pub fn with_cell(mut self, cell: impl Into<TableCell<'data>>) -> Self {
+        self.add_cell(cell);
+        self
     }
 
     /// Formats a row based on the provided table style
-    pub fn format(&self, column_widths: &[usize], style: &TableStyle) -> String {
-        let mut buf = String::new();
-
+    pub fn format(
+        &self,
+        column_widths: &[usize],
+        style: &TableStyle,
+        f: &mut fmt::Formatter,
+    ) -> fmt::Result {
         // Since a cell can span multiple columns we need to track
         // how many columns we have actually spanned. We cannot just depend
         // on the index of the current cell when iterating
@@ -159,14 +193,11 @@ impl<'data> Row<'data> {
             }
         }
         // Finally add all the lines together to create the row content
-        for line in &lines {
-            buf.push_str(line.clone().as_str());
-            buf.push(style.vertical);
-            buf.push('\n');
+        let mut lines = lines.iter().peekable();
+        while let Some(line) = lines.next() {
+            writeln!(f, "{}{}", line, style.vertical)?;
         }
-        buf.pop();
-
-        buf
+        Ok(())
     }
 
     /// Generates the top separator for a row.
@@ -296,3 +327,66 @@ impl<'data> Row<'data> {
         }
     }
 }
+
+/// A trait for types that know how to turn themselves into a table row.
+///
+/// Note that the tuple implementations of these methods always copy strings.
+pub trait IntoRow {
+    /// Returns a set of cells that can be used as headers for the cells of data of this type.
+    fn headers(&self) -> Row;
+    /// Returns the row.
+    fn into_row(&self) -> Row;
+}
+
+macro_rules! impl_row_for_tuple {
+    () => {};
+
+    (($first_label:expr, $first_ty:ident) $(,($rest_label:expr, $rest_ty:ident))*) => {
+        impl<$first_ty, $($rest_ty,)*> IntoRow for ($first_ty, $($rest_ty),*)
+            where $first_ty: ::std::fmt::Display,
+                  $(
+                      $rest_ty: ::std::fmt::Display,
+                  )*
+        {
+            fn headers(&self) -> Row {
+                let mut row = Row::default();
+                row.add_cell(stringify!($first_ty));
+                $(
+                    row.add_cell(stringify!($rest_ty));
+                )*
+                row
+            }
+
+            fn into_row(&self) -> Row {
+                #[allow(non_snake_case)]
+                let (
+                    ref $first_ty,
+                    $(
+                        ref $rest_ty
+                    ),*
+                ) = &self;
+                let mut row = Row::default();
+                row.add_cell($first_ty.to_string());
+                $(
+                    row.add_cell($rest_ty.to_string());
+                )*
+                row
+            }
+        }
+
+        impl_row_for_tuple!($(($rest_label, $rest_ty)),*);
+    };
+}
+
+impl_row_for_tuple!(
+    ("_0", D0),
+    ("_1", D1),
+    ("_2", D2),
+    ("_3", D3),
+    ("_4", D4),
+    ("_5", D5),
+    ("_6", D6),
+    ("_7", D7),
+    ("_8", D8),
+    ("_9", D9)
+);
