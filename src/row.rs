@@ -1,14 +1,11 @@
-use crate::{
-    table_cell::{string_width, Alignment, TableCell},
-    RowPosition, TableStyle,
-};
-use std::{cmp::max, fmt};
-use unicode_width::UnicodeWidthChar;
+use crate::{Cell, TableStyle};
+use itertools::Itertools;
+use std::fmt::{self, Write};
 
 /// A set of table cells
 #[derive(Debug, Clone)]
 pub struct Row<'data> {
-    pub(crate) cells: Vec<TableCell<'data>>,
+    pub(crate) cells: Vec<Cell<'data>>,
     /// Whether the row should have a top border or not
     pub(crate) has_separator: bool,
 }
@@ -27,282 +24,165 @@ impl<'data> Row<'data> {
         Default::default()
     }
 
-    /*
-    pub fn from_cells<I, T>(cells: I) -> Row<'data>
-    where
-        T: Into<TableCell<'data>>,
-        I: IntoIterator<Item = T>,
-    {
-        let mut row = Row {
-            cells: vec![],
-            has_separator: true,
-        };
-
-        for entry in cells.into_iter() {
-            row.cells.push(entry.into());
-        }
-
-        row
-    }*/
-
+    /// Whether the row should have a top border or not
     pub fn with_separator(mut self, has_separator: bool) -> Self {
+        self.set_has_separator(has_separator);
+        self
+    }
+
+    /// Whether the row should have a top border or not
+    pub fn set_has_separator(&mut self, has_separator: bool) -> &mut Self {
         self.has_separator = has_separator;
         self
     }
 
-    pub fn add_cell(&mut self, cell: impl Into<TableCell<'data>>) -> &mut Self {
+    pub fn add_cell(&mut self, cell: impl Into<Cell<'data>>) -> &mut Self {
         self.cells.push(cell.into());
         self
     }
 
-    pub fn with_cell(mut self, cell: impl Into<TableCell<'data>>) -> Self {
+    pub fn with_cell(mut self, cell: impl Into<Cell<'data>>) -> Self {
         self.add_cell(cell);
         self
     }
 
-    /// Formats a row based on the provided table style
-    pub fn format(
+    /// Number of columns in this row, taking into account col_span > 1.
+    pub(crate) fn columns(&self) -> usize {
+        self.cells.iter().map(|cell| cell.col_span).sum()
+    }
+
+    /// Ask the row to calculate its layout.
+    ///
+    /// Returns the number of lines required to display this row (without the top border).
+    pub(crate) fn layout(&self, column_widths: &[usize], border_width: usize) -> usize {
+        let mut max_lines = 0;
+        let mut idx = 0;
+        for cell in self.cells.iter() {
+            // start with the extra space for borders
+            let mut width = (cell.col_span - 1) * border_width;
+
+            // add in space for cell content.
+            for w in column_widths[idx..idx + cell.col_span].iter().copied() {
+                width += w;
+            }
+            let num_lines = cell.layout(Some(width));
+            idx += cell.col_span;
+            max_lines = max_lines.max(num_lines);
+        }
+        max_lines
+    }
+
+    pub fn render_top_separator(
         &self,
-        column_widths: &[usize],
+        cell_widths: &[usize],
         style: &TableStyle,
         f: &mut fmt::Formatter,
     ) -> fmt::Result {
-        // Since a cell can span multiple columns we need to track
-        // how many columns we have actually spanned. We cannot just depend
-        // on the index of the current cell when iterating
-        let mut spanned_columns = 0;
-
-        // The height of the row determined by how many times a cell had to wrap
-        let mut row_height = 0;
-
-        // Wrapped cell content
-        let mut wrapped_cells = Vec::new();
-
-        // The first thing we do is wrap the cells if their
-        // content is greater than the max width of the column they are in
-        for cell in &self.cells {
-            let mut width = 0;
-            // Iterate from 0 to the cell's col_span and add up all the max width
-            // values for each column so we can properly pad the cell content later
-            for j in 0..cell.col_span {
-                width += column_widths[j + spanned_columns];
-            }
-            // Wrap to the total width - col_span to account for separators
-            let wrapped_cell = cell.wrapped_content(width + cell.col_span - 1);
-            row_height = max(row_height, wrapped_cell.len());
-            wrapped_cells.push(wrapped_cell);
-            spanned_columns += cell.col_span;
+        if !self.has_separator {
+            // don't draw anything
+            return Ok(());
         }
-
-        // reset spanned_columns so we can reuse it in the next loop
-        spanned_columns = 0;
-
-        // Row lines to combine into the final string at the end
-        let mut lines = vec![String::new(); row_height];
-
-        // We need to iterate over all of the column widths
-        // We may not have as many cells as column widths, or the cells may not even span
-        // as many columns as are in column widths. In that case weill will create empty cells
-        for col_idx in 0..column_widths.len() {
-            // Check to see if we actually have a cell for the column index
-            // Otherwise we will just need to print out empty space as filler
-            if self.cells.len() > col_idx {
-                // Number of characters spanned by column
-                let mut cell_span = 0;
-
-                // Get the cell using the column index
-                //
-                // This is a little bit confusing because cells and columns aren't always one to one
-                // We may have fewer cells than columns or some cells may span multiple columns
-                // If there are fewer cells than columns we just end drawing empty cells in the else block
-                // If there are fewer cells than columns but they span the total number of columns we just break out
-                // of the outer for loop at the end. We know how many cells we've spanned by adding the cell's col_span to spanned_columns
-                let cell = &self.cells[col_idx];
-                // Calculate the cell span by adding up the widths of the columns spanned by the cell
-                for c in 0..cell.col_span {
-                    cell_span += column_widths[spanned_columns + c];
-                }
-                // Since cells can wrap we need to loop over all of the lines
-                for (line_idx, line) in lines.iter_mut().enumerate().take(row_height) {
-                    // Check to see if the wrapped cell has a line for the line index
-                    if wrapped_cells[col_idx].len() > line_idx {
-                        // We may need to pad the cell if it's contents are not as wide as some other cell in the column
-                        let mut padding = 0;
-                        // We need to calculate the string_width because some characters take up extra space and we need to
-                        // ignore ANSI characters
-                        let str_width = string_width(&wrapped_cells[col_idx][line_idx]);
-                        if cell_span >= str_width {
-                            padding += cell_span - str_width;
-                            // If the cols_span is greater than one we need to add extra padding for the missing vertical characters
-                            if cell.col_span > 1 {
-                                padding += style.vertical.width().unwrap_or_default()
-                                    * (cell.col_span - 1); // Subtract one since we add a vertical character to the beginning
-                            }
-                        }
-
-                        // Finally we can push the string into the lines vec
-                        line.push_str(
-                            format!(
-                                "{}{}",
-                                style.vertical,
-                                self.pad_string(
-                                    padding,
-                                    cell.alignment,
-                                    &wrapped_cells[col_idx][line_idx]
-                                )
-                            )
-                            .as_str(),
-                        );
-                    } else {
-                        // If the cell doesn't have any content for this line just fill it with empty space
-                        line.push_str(
-                            format!(
-                                "{}{}",
-                                style.vertical,
-                                str::repeat(
-                                    " ",
-                                    column_widths[spanned_columns] * cell.col_span + cell.col_span
-                                        - 1
-                                )
-                            )
-                            .as_str(),
-                        );
-                    }
-                }
-                // Keep track of how many columns we have actually spanned since
-                // cells can be wider than a single column
-                spanned_columns += cell.col_span;
-            } else {
-                // If we don't have a cell for the coulumn then we just create an empty one
-                for line in lines.iter_mut().take(row_height) {
-                    line.push_str(
-                        format!(
-                            "{}{}",
-                            style.vertical,
-                            str::repeat(" ", column_widths[spanned_columns])
-                        )
-                        .as_str(),
-                    );
-                }
-                // Add one to the spanned column since the empty space is basically a cell
-                spanned_columns += 1;
-            }
-            // If we have spanned as many columns as there are then just break out of the loop
-            if spanned_columns == column_widths.len() {
-                break;
+        // special-case the first cell
+        f.write_char(style.top_left_corner)?;
+        let mut widths = cell_widths;
+        let mut width;
+        let mut cells = self.cells.iter();
+        if let Some(first_cell) = cells.next() {
+            (width, widths) = first_cell.width(style.border_width(), widths);
+            for _ in 0..width {
+                f.write_char(style.horizontal)?;
             }
         }
-        // Finally add all the lines together to create the row content
-        let mut lines = lines.iter().peekable();
-        while let Some(line) = lines.next() {
-            writeln!(f, "{}{}", line, style.vertical)?;
+        for cell in cells {
+            f.write_char(style.outer_top_horizontal)?;
+            (width, widths) = cell.width(style.border_width(), widths);
+            for _ in 0..width {
+                f.write_char(style.horizontal)?;
+            }
+        }
+        f.write_char(style.top_right_corner)?;
+        writeln!(f)
+    }
+
+    pub fn render_bottom_separator(
+        &self,
+        cell_widths: &[usize],
+        style: &TableStyle,
+        f: &mut fmt::Formatter,
+    ) -> fmt::Result {
+        if !self.has_separator {
+            // don't draw anything
+            return Ok(());
+        }
+        // special-case the first cell
+        f.write_char(style.bottom_left_corner)?;
+        let mut widths = cell_widths;
+        let mut width;
+        let mut cells = self.cells.iter();
+        if let Some(first_cell) = cells.next() {
+            (width, widths) = first_cell.width(style.border_width(), widths);
+            for _ in 0..width {
+                f.write_char(style.horizontal)?;
+            }
+        }
+        for cell in cells {
+            f.write_char(style.outer_bottom_horizontal)?;
+            (width, widths) = cell.width(style.border_width(), widths);
+            for _ in 0..width {
+                f.write_char(style.horizontal)?;
+            }
+        }
+        f.write_char(style.bottom_right_corner)?;
+        writeln!(f)
+    }
+
+    pub fn render_separator(
+        &self,
+        prev: &Row,
+        cell_widths: &[usize],
+        style: &TableStyle,
+        f: &mut fmt::Formatter,
+    ) -> fmt::Result {
+        if !self.has_separator {
+            // don't draw anything
+            return Ok(());
+        }
+        f.write_char(style.outer_left_vertical)?;
+        let mut iter = cell_widths
+            .iter()
+            .copied()
+            .zip(self.iter_junctions(prev).skip(1))
+            .peekable();
+        while let Some((width, borders)) = iter.next() {
+            for _ in 0..width {
+                f.write_char(style.horizontal)?;
+            }
+            f.write_char(borders.joiner(style, iter.peek().is_none()))?;
+        }
+        writeln!(f)
+    }
+
+    /// Formats a row based on the provided table style
+    pub(crate) fn render_content(
+        &self,
+        column_widths: &[usize],
+        num_lines: usize,
+        style: &TableStyle,
+        f: &mut fmt::Formatter,
+    ) -> fmt::Result {
+        for line_num in 0..num_lines {
+            let mut width;
+            let mut widths = column_widths;
+            for cell in &self.cells {
+                f.write_char(style.vertical)?;
+                (width, widths) = cell.width(style.border_width(), widths);
+                cell.render_line(line_num, width, f)?;
+            }
+            f.write_char(style.vertical)?;
+            writeln!(f)?;
         }
         Ok(())
     }
-
-    /// Generates the top separator for a row.
-    ///
-    /// The previous seperator is used to determine junction characters
-    pub fn gen_separator(
-        &self,
-        column_widths: &[usize],
-        style: &TableStyle,
-        row_position: RowPosition,
-        previous_separator: Option<String>,
-    ) -> String {
-        let mut buf = String::new();
-
-        // If the first cell has a col_span > 1 we need to set the next
-        // intersection point to that value
-        let mut next_intersection = match self.cells.first() {
-            Some(cell) => cell.col_span,
-            None => 1,
-        };
-
-        // Push the initial char for the row
-        buf.push(style.start_for_position(row_position));
-
-        let mut current_column = 0;
-
-        for (i, column_width) in column_widths.iter().enumerate() {
-            if i == next_intersection {
-                // Draw the intersection character for the start of the column
-                buf.push(style.intersect_for_position(row_position));
-
-                current_column += 1;
-
-                // If we still have remaining cells then we use the col_span to determine
-                // when the next intersection character should be drawn
-                if self.cells.len() > current_column {
-                    next_intersection += self.cells[current_column].col_span;
-                } else {
-                    // Otherwise we just draw an intersection for every column
-                    next_intersection += 1;
-                }
-            } else if i > 0 {
-                // This means the current cell has a col_span > 1
-                buf.push(style.horizontal);
-            }
-            // Fill in all of the horizontal space
-            buf.push_str(
-                str::repeat(style.horizontal.to_string().as_str(), *column_width).as_str(),
-            );
-        }
-
-        buf.push(style.end_for_position(row_position));
-
-        let mut out = String::new();
-
-        // Merge the previous seperator string with the current buffer
-        // This will handle cases where a cell above/below has a different col_span value
-        match previous_separator {
-            Some(prev) => {
-                for pair in buf.chars().zip(prev.chars()) {
-                    if pair.0 == style.outer_left_vertical || pair.0 == style.outer_right_vertical {
-                        // Always take the start and end characters of the current buffer
-                        out.push(pair.0);
-                    } else if pair.0 != style.horizontal || pair.1 != style.horizontal {
-                        out.push(style.merge_intersection_for_position(
-                            pair.1,
-                            pair.0,
-                            row_position,
-                        ));
-                    } else {
-                        out.push(style.horizontal);
-                    }
-                }
-                out
-            }
-            None => buf,
-        }
-    }
-
-    /// Returns a vector of split cell widths.
-    ///
-    /// A split width is the cell's total width divided by it's col_span value.
-    ///
-    /// Each cell's split width value is pushed into the resulting vector col_span times.
-    /// Returns a vec of tuples containing the cell width and the min cell width
-    pub fn split_column_widths(&self) -> Vec<(f32, usize)> {
-        let mut res = Vec::new();
-        for cell in &self.cells {
-            let val = cell.split_width();
-
-            let min = (cell.min_width() as f32 / cell.col_span as f32) as usize;
-
-            let add_one = cell.min_width() as f32 % cell.col_span as f32 > 0.001;
-            for i in 0..cell.col_span {
-                if add_one && i == cell.col_span - 1 {
-                    res.push((val + 1.0, min + 1));
-                } else {
-                    res.push((val, min));
-                }
-            }
-        }
-
-        res
-    }
-
     /// Number of columns in the row.
     ///
     /// This is the sum of all cell's col_span values
@@ -310,23 +190,107 @@ impl<'data> Row<'data> {
         self.cells.iter().map(|x| x.col_span).sum()
     }
 
-    /// Pads a string accoding to the provided alignment
-    fn pad_string(&self, padding: usize, alignment: Alignment, text: &str) -> String {
-        match alignment {
-            Alignment::Left => return format!("{}{}", text, str::repeat(" ", padding)),
-            Alignment::Right => return format!("{}{}", str::repeat(" ", padding), text),
-            Alignment::Center => {
-                let half_padding = padding as f32 / 2.0;
-                return format!(
-                    "{}{}{}",
-                    str::repeat(" ", half_padding.ceil() as usize),
-                    text,
-                    str::repeat(" ", half_padding.floor() as usize)
-                );
+    /// What kind of join is at the beginning of each cell.
+    fn iter_joins(&'data self) -> impl Iterator<Item = BorderTy> + 'data {
+        struct IterJoins<'a> {
+            inner: std::slice::Iter<'a, Cell<'a>>,
+            // cols_remaining == 0 means we are past the end.
+            cols_remaining: usize,
+        }
+
+        impl<'a> Iterator for IterJoins<'a> {
+            type Item = BorderTy;
+            fn next(&mut self) -> Option<Self::Item> {
+                let out = Some(match &mut self.cols_remaining {
+                    // we are past the end
+                    0 => BorderTy::Empty,
+                    // we are at the end of a cell
+                    n @ 1 => {
+                        *n = self.inner.next().map(|cell| cell.col_span).unwrap_or(0);
+                        BorderTy::End
+                    }
+                    // we are in the middle of a cell
+                    n => {
+                        *n -= 1;
+                        BorderTy::Middle
+                    }
+                });
+                out
+            }
+        }
+        IterJoins {
+            inner: self.cells.iter(),
+            // start as if we just finished a cell
+            cols_remaining: 1,
+        }
+    }
+
+    /// The correct border given the previous and next rows.
+    fn iter_junctions(&'data self, prev: &'data Self) -> impl Iterator<Item = Borders> + 'data {
+        prev.iter_joins()
+            .zip(self.iter_joins())
+            .map(|(above, below)| {
+                let borders = Borders { above, below };
+                if borders == Borders::EMPTY {
+                    None
+                } else {
+                    Some(borders)
+                }
+            })
+            .while_some()
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+struct Borders {
+    above: BorderTy,
+    below: BorderTy,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum BorderTy {
+    Empty,
+    Middle,
+    End,
+}
+
+impl Borders {
+    const EMPTY: Borders = Borders {
+        above: BorderTy::Empty,
+        below: BorderTy::Empty,
+    };
+
+    fn joiner(&self, style: &TableStyle, final_end: bool) -> char {
+        use BorderTy::*;
+        match (self.above, self.below) {
+            (Empty, Empty) => unreachable!(),
+            (Empty, Middle) | (Middle, Empty) | (Middle, Middle) => style.horizontal,
+            (Empty, End) | (Middle, End) => {
+                if final_end {
+                    style.top_right_corner
+                } else {
+                    style.outer_top_horizontal
+                }
+            }
+            (End, Empty) | (End, Middle) => {
+                if final_end {
+                    style.bottom_right_corner
+                } else {
+                    style.outer_bottom_horizontal
+                }
+            }
+            (End, End) => {
+                if final_end {
+                    style.outer_right_vertical
+                } else {
+                    style.intersection
+                }
             }
         }
     }
 }
+
+// ------------------
 
 /// A trait for types that know how to turn themselves into a table row.
 ///

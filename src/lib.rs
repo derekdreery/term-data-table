@@ -2,30 +2,30 @@
 //!# Example
 //! Here is an example of how to create a simple table
 //!```
-//! use term_data_table::{ Table, TableCell, TableStyle, Alignment, Row };
+//! use term_data_table::{ Table, Cell, TableStyle, Alignment, Row };
 //!
 //! let table = Table::new()
 //!     .with_max_column_width(40)
 //!     .with_style(TableStyle::EXTENDED)
 //!     .with_row(Row::new().with_cell(
-//!         TableCell::from("This is some centered text")
+//!         Cell::from("This is some centered text")
 //!             .with_alignment(Alignment::Center)
 //!             .with_col_span(2)
 //!     ))
 //!     .with_row(Row::new().with_cell(
-//!         TableCell::from("This is left aligned text")
+//!         Cell::from("This is left aligned text")
 //!     ).with_cell(
-//!         TableCell::from("This is right aligned text")
+//!         Cell::from("This is right aligned text")
 //!             .with_alignment(Alignment::Right)
 //!     ))
 //!     .with_row(Row::new().with_cell(
-//!         TableCell::from("This is left aligned text")
+//!         Cell::from("This is left aligned text")
 //!     ).with_cell(
-//!         TableCell::from("This is right aligned text")
+//!         Cell::from("This is right aligned text")
 //!             .with_alignment(Alignment::Right)
 //!     ))
 //!     .with_row(Row::new().with_cell(
-//!         TableCell::from("This is some really really really really really really really really really that is going to wrap to the next line")
+//!         Cell::from("This is some really really really really really really really really really that is going to wrap to the next line")
 //!             .with_col_span(2)
 //!     ));
 //!println!("{}", table.render());
@@ -49,21 +49,22 @@
 #[macro_use]
 extern crate lazy_static;
 
+mod cell;
 mod row;
-mod table_cell;
+mod style;
 
 pub use crate::{
+    cell::{Alignment, Cell},
     row::{IntoRow, Row},
-    table_cell::{Alignment, TableCell},
+    style::TableStyle,
 };
+// TODO just use a serde deserializer.
 #[doc(inline)]
 pub use term_data_table_derive::IntoRow;
 
-use std::{
-    cmp::{max, min},
-    collections::HashMap,
-    fmt,
-};
+use itertools::Itertools;
+use std::{cell::RefCell, fmt};
+use terminal_size::terminal_size;
 
 /// Represents the vertical position of a row
 #[derive(Eq, PartialEq, Copy, Clone)]
@@ -73,303 +74,31 @@ pub enum RowPosition {
     Last,
 }
 
-/// A set of characters which make up a table style
-///
-///# Example
-///
-///```
-/// term_data_table::TableStyle {
-///     top_left_corner: '╔',
-///     top_right_corner: '╗',
-///     bottom_left_corner: '╚',
-///     bottom_right_corner: '╝',
-///     outer_left_vertical: '╠',
-///     outer_right_vertical: '╣',
-///     outer_bottom_horizontal: '╩',
-///     outer_top_horizontal: '╦',
-///     intersection: '╬',
-///     vertical: '║',
-///     horizontal: '═',
-/// };
-///```
-#[derive(Debug, Clone, Copy)]
-pub struct TableStyle {
-    pub top_left_corner: char,
-    pub top_right_corner: char,
-    pub bottom_left_corner: char,
-    pub bottom_right_corner: char,
-    pub outer_left_vertical: char,
-    pub outer_right_vertical: char,
-    pub outer_bottom_horizontal: char,
-    pub outer_top_horizontal: char,
-    pub intersection: char,
-    pub vertical: char,
-    pub horizontal: char,
-}
-
-impl TableStyle {
-    /// Basic terminal table style
-    ///
-    ///# Example
-    ///
-    ///<pre>
-    ///   +---------------------------------------------------------------------------------+
-    ///   |                            This is some centered text                           |
-    ///   +----------------------------------------+----------------------------------------+
-    ///   | This is left aligned text              |             This is right aligned text |
-    ///   +----------------------------------------+----------------------------------------+
-    ///   | This is left aligned text              |             This is right aligned text |
-    ///   +----------------------------------------+----------------------------------------+
-    ///   | This is some really really really really really really really really really tha |
-    ///   | t is going to wrap to the next line                                             |
-    ///   +---------------------------------------------------------------------------------+
-    ///</pre>
-    pub const SIMPLE: TableStyle = TableStyle {
-        top_left_corner: '+',
-        top_right_corner: '+',
-        bottom_left_corner: '+',
-        bottom_right_corner: '+',
-        outer_left_vertical: '+',
-        outer_right_vertical: '+',
-        outer_bottom_horizontal: '+',
-        outer_top_horizontal: '+',
-        intersection: '+',
-        vertical: '|',
-        horizontal: '-',
-    };
-
-    /// Table style using extended character set
-    ///
-    ///# Example
-    ///
-    ///<pre>
-    /// ╔═════════════════════════════════════════════════════════════════════════════════╗
-    /// ║                            This is some centered text                           ║
-    /// ╠════════════════════════════════════════╦════════════════════════════════════════╣
-    /// ║ This is left aligned text              ║             This is right aligned text ║
-    /// ╠════════════════════════════════════════╬════════════════════════════════════════╣
-    /// ║ This is left aligned text              ║             This is right aligned text ║
-    /// ╠════════════════════════════════════════╩════════════════════════════════════════╣
-    /// ║ This is some really really really really really really really really really tha ║
-    /// ║ t is going to wrap to the next line                                             ║
-    /// ╚═════════════════════════════════════════════════════════════════════════════════╝
-    ///</pre>
-    pub const EXTENDED: TableStyle = TableStyle {
-        top_left_corner: '╔',
-        top_right_corner: '╗',
-        bottom_left_corner: '╚',
-        bottom_right_corner: '╝',
-        outer_left_vertical: '╠',
-        outer_right_vertical: '╣',
-        outer_bottom_horizontal: '╩',
-        outer_top_horizontal: '╦',
-        intersection: '╬',
-        vertical: '║',
-        horizontal: '═',
-    };
-
-    /// <pre>
-    /// ┌─────────────────────────────────────────────────────────────────────────────────┐
-    /// │                            This is some centered text                           │
-    /// ├────────────────────────────────────────┬────────────────────────────────────────┤
-    /// │ This is left aligned text              │             This is right aligned text │
-    /// ├────────────────────────────────────────┼────────────────────────────────────────┤
-    /// │ This is left aligned text              │             This is right aligned text │
-    /// ├────────────────────────────────────────┴────────────────────────────────────────┤
-    /// │ This is some really really really really really really really really really tha │
-    /// │ t is going to wrap to the next line                                             │
-    /// └─────────────────────────────────────────────────────────────────────────────────┘
-    /// </pre>
-    pub const THIN: TableStyle = TableStyle {
-        top_left_corner: '┌',
-        top_right_corner: '┐',
-        bottom_left_corner: '└',
-        bottom_right_corner: '┘',
-        outer_left_vertical: '├',
-        outer_right_vertical: '┤',
-        outer_bottom_horizontal: '┴',
-        outer_top_horizontal: '┬',
-        intersection: '┼',
-        vertical: '│',
-        horizontal: '─',
-    };
-
-    ///  <pre>
-    /// ╭─────────────────────────────────────────────────────────────────────────────────╮
-    /// │                            This is some centered text                           │
-    /// ├────────────────────────────────────────┬────────────────────────────────────────┤
-    /// │ This is left aligned text              │             This is right aligned text │
-    /// ├────────────────────────────────────────┼────────────────────────────────────────┤
-    /// │ This is left aligned text              │             This is right aligned text │
-    /// ├────────────────────────────────────────┴────────────────────────────────────────┤
-    /// │ This is some really really really really really really really really really tha │
-    /// │ t is going to wrap to the next line                                             │
-    /// ╰─────────────────────────────────────────────────────────────────────────────────╯
-    /// </pre>
-    pub const ROUNDED: TableStyle = TableStyle {
-        top_left_corner: '╭',
-        top_right_corner: '╮',
-        bottom_left_corner: '╰',
-        bottom_right_corner: '╯',
-        outer_left_vertical: '├',
-        outer_right_vertical: '┤',
-        outer_bottom_horizontal: '┴',
-        outer_top_horizontal: '┬',
-        intersection: '┼',
-        vertical: '│',
-        horizontal: '─',
-    };
-
-    /// <pre>
-    /// ╔─────────────────────────────────────────────────────────────────────────────────╗
-    /// │                            This is some centered text                           │
-    /// ╠────────────────────────────────────────╦────────────────────────────────────────╣
-    /// │ This is left aligned text              │             This is right aligned text │
-    /// ╠────────────────────────────────────────┼────────────────────────────────────────╣
-    /// │ This is left aligned text              │             This is right aligned text │
-    /// ╠────────────────────────────────────────╩────────────────────────────────────────╣
-    /// │ This is some really really really really really really really really really tha │
-    /// │ t is going to wrap to the next line                                             │
-    /// ╚─────────────────────────────────────────────────────────────────────────────────╝
-    /// </pre>
-
-    pub const ELEGANT: TableStyle = TableStyle {
-        top_left_corner: '╔',
-        top_right_corner: '╗',
-        bottom_left_corner: '╚',
-        bottom_right_corner: '╝',
-        outer_left_vertical: '╠',
-        outer_right_vertical: '╣',
-        outer_bottom_horizontal: '╩',
-        outer_top_horizontal: '╦',
-        intersection: '┼',
-        vertical: '│',
-        horizontal: '─',
-    };
-
-    /// Table style comprised of null characters
-    ///
-    ///# Example
-    ///
-    ///<pre>
-    ///                           This is some centered text
-    ///
-    /// This is left aligned text                           This is right aligned text
-    ///
-    /// This is left aligned text                           This is right aligned text
-    ///
-    /// This is some really really really really really really really really really tha
-    /// t is going to wrap to the next line
-    ///</pre>
-    pub const BLANK: TableStyle = TableStyle {
-        top_left_corner: '\0',
-        top_right_corner: '\0',
-        bottom_left_corner: '\0',
-        bottom_right_corner: '\0',
-        outer_left_vertical: '\0',
-        outer_right_vertical: '\0',
-        outer_bottom_horizontal: '\0',
-        outer_top_horizontal: '\0',
-        intersection: '\0',
-        vertical: '\0',
-        horizontal: '\0',
-    };
-
-    /// Table style comprised of empty characters for compatibility with terminals
-    /// that don't handle null characters appropriately
-    ///
-    ///# Example
-    ///
-    ///<pre>
-    ///                           This is some centered text
-    ///
-    /// This is left aligned text                           This is right aligned text
-    ///
-    /// This is left aligned text                           This is right aligned text
-    ///
-    /// This is some really really really really really really really really really tha
-    /// t is going to wrap to the next line
-    ///</pre>
-    pub const EMPTY: TableStyle = TableStyle {
-        top_left_corner: ' ',
-        top_right_corner: ' ',
-        bottom_left_corner: ' ',
-        bottom_right_corner: ' ',
-        outer_left_vertical: ' ',
-        outer_right_vertical: ' ',
-        outer_bottom_horizontal: ' ',
-        outer_top_horizontal: ' ',
-        intersection: ' ',
-        vertical: ' ',
-        horizontal: ' ',
-    };
-
-    /// Returns the start character of a table style based on the
-    /// vertical position of the row
-    fn start_for_position(&self, pos: RowPosition) -> char {
-        match pos {
-            RowPosition::First => self.top_left_corner,
-            RowPosition::Mid => self.outer_left_vertical,
-            RowPosition::Last => self.bottom_left_corner,
-        }
-    }
-
-    /// Returns the end character of a table style based on the
-    /// vertical position of the row
-    fn end_for_position(&self, pos: RowPosition) -> char {
-        match pos {
-            RowPosition::First => self.top_right_corner,
-            RowPosition::Mid => self.outer_right_vertical,
-            RowPosition::Last => self.bottom_right_corner,
-        }
-    }
-
-    /// Returns the intersect character of a table style based on the
-    /// vertical position of the row
-    fn intersect_for_position(&self, pos: RowPosition) -> char {
-        match pos {
-            RowPosition::First => self.outer_top_horizontal,
-            RowPosition::Mid => self.intersection,
-            RowPosition::Last => self.outer_bottom_horizontal,
-        }
-    }
-
-    /// Merges two intersecting characters based on the vertical position of a row.
-    /// This is used to handle cases where one cell has a larger `col_span` value than the other
-    fn merge_intersection_for_position(&self, top: char, bottom: char, pos: RowPosition) -> char {
-        if (top == self.horizontal || top == self.outer_bottom_horizontal)
-            && bottom == self.intersection
-        {
-            return self.outer_top_horizontal;
-        } else if (top == self.intersection || top == self.outer_top_horizontal)
-            && bottom == self.horizontal
-        {
-            return self.outer_bottom_horizontal;
-        } else if top == self.outer_bottom_horizontal && bottom == self.horizontal {
-            return self.horizontal;
-        } else {
-            return self.intersect_for_position(pos);
-        }
-    }
-}
-
 /// A set of rows containing data
 #[derive(Clone, Debug)]
 pub struct Table<'data> {
     rows: Vec<Row<'data>>,
     style: TableStyle,
-    /// The maximum width of all columns. Overridden by values in `max_column_widths`. Defaults to
-    /// `usize::MAX`.
-    max_column_width: usize,
-    /// The maximum widths of specific columns. Override `max_column_width`
-    max_column_widths: HashMap<usize, usize>,
-    /// Whether or not to vertically separate rows in the table
+    /// Whether or not to vertically separate rows in the table.
+    ///
+    /// Defaults to `true`.
     pub has_separate_rows: bool,
     /// Whether the table should have a top border.
-    /// Setting `has_separator` to false on the first row will have the same effect as setting this to false
+    ///
+    /// Setting `has_separator` to false on the first row will have the same effect as setting this
+    /// to false
+    ///
+    /// Defaults to `true`.
     pub has_top_border: bool,
     /// Whether the table should have a bottom border
+    ///
+    /// Defaults to `true`.
     pub has_bottom_border: bool,
+
+    /// Calculated column widths.
+    column_widths: RefCell<ColumnWidths>,
+    /// Calculated row lines
+    row_lines: RefCell<Vec<usize>>,
 }
 
 impl<'data> Default for Table<'data> {
@@ -377,11 +106,12 @@ impl<'data> Default for Table<'data> {
         Self {
             rows: Vec::new(),
             style: TableStyle::EXTENDED,
-            max_column_width: std::usize::MAX,
-            max_column_widths: HashMap::new(),
             has_separate_rows: true,
             has_top_border: true,
             has_bottom_border: true,
+
+            column_widths: RefCell::new(ColumnWidths::new()),
+            row_lines: RefCell::new(vec![]),
         }
     }
 }
@@ -420,6 +150,7 @@ impl<'data> Table<'data> {
         self
     }
 
+    /*
     pub fn max_column_width(&self) -> usize {
         self.max_column_width
     }
@@ -446,6 +177,7 @@ impl<'data> Table<'data> {
         self.set_max_width_for_column(column_index, max_width);
         self
     }
+    */
 
     pub fn has_separate_rows(&self) -> bool {
         self.has_separate_rows
@@ -461,115 +193,115 @@ impl<'data> Table<'data> {
         self
     }
 
-    /// Does all of the calculations to reformat the row based on it's current
-    /// state and returns the result as a `String`
-    pub fn render(&self) -> String {
-        self.to_string()
+    /// Decide how much space to give each cell and layout the rows.
+    ///
+    /// If no width is given, all cells will be the largest of their contents.
+    ///
+    fn layout(&self, width: Option<usize>) {
+        // We need to know the maxiumum number of columns in a row.
+        let cols = self.rows.iter().map(|row| row.columns()).max().unwrap_or(0);
+        let border_width = self.style.border_width();
+        let mut col_widths = self.column_widths.borrow_mut();
+        col_widths.reset(cols);
+
+        // short-circuit when there are no columns
+        if cols == 0 {
+            return;
+        }
+
+        if let Some(width) = width {
+            // For now, just give each cell the same amount of space. In the future, it might be
+            // possible to give more space to cells that need it (based on their min_width).
+            col_widths.fit_even_rows(width, cols, border_width);
+        } else {
+            // Give all cells all the space they need.
+            for row in self.rows.iter() {
+                col_widths.fit_row_singleline(row, border_width);
+            }
+        }
+        for row in self.rows.iter() {
+            self.row_lines
+                .borrow_mut()
+                .push(row.layout(&*col_widths, border_width));
+        }
     }
 
-    /// Calculates the maximum width for each column.
+    /// Write the table out to a formatter.
     ///
-    /// If a cell has a column span greater than 1, then the width of it's contents are divided by
-    /// the column span, otherwise the cell would use more space than it needed.
-    fn calculate_max_column_widths(&self) -> Vec<usize> {
-        let mut num_columns = 0;
-
-        for row in &self.rows {
-            num_columns = max(row.num_columns(), num_columns);
+    /// This method calculates stale state that it needs.
+    ///
+    /// # Params
+    ///  - `view_width` - the width of the viewport we are rendering to, if any. If unspecified,
+    ///    we will assume infinite width.
+    fn render(&self, view_width: Option<usize>, f: &mut fmt::Formatter) -> fmt::Result {
+        self.layout(view_width);
+        if self.rows.is_empty() {
+            return writeln!(f, "<empty table>");
         }
-        let mut max_widths: Vec<usize> = vec![0; num_columns];
-        let mut min_widths: Vec<usize> = vec![0; num_columns];
-        for row in &self.rows {
-            let column_widths = row.split_column_widths();
-            for i in 0..column_widths.len() {
-                min_widths[i] = max(min_widths[i], column_widths[i].1);
-                let mut max_width = *self
-                    .max_column_widths
-                    .get(&i)
-                    .unwrap_or(&self.max_column_width);
-                max_width = max(min_widths[i] as usize, max_width);
-                max_widths[i] = min(max_width, max(max_widths[i], column_widths[i].0 as usize));
-            }
+        let row_lines = self.row_lines.borrow();
+
+        if self.has_top_border {
+            self.rows[0].render_top_separator(&*self.column_widths.borrow(), &self.style, f)?;
         }
+        self.rows[0].render_content(&*self.column_widths.borrow(), row_lines[0], &self.style, f)?;
 
-        // Here we are dealing with the case where we have a cell that is center
-        // aligned but the max_width doesn't allow for even padding on either side
-        for row in &self.rows {
-            let mut col_index = 0;
-            for cell in row.cells.iter() {
-                let mut total_col_width = 0;
-                for i in col_index..col_index + cell.col_span {
-                    total_col_width += max_widths[i];
-                }
-                if cell.width() != total_col_width
-                    && cell.alignment == Alignment::Center
-                    && total_col_width as f32 % 2.0 <= 0.001
-                {
-                    let mut max_col_width = self.max_column_width;
-                    if let Some(specific_width) = self.max_column_widths.get(&col_index) {
-                        max_col_width = *specific_width;
-                    }
+        for (idx, (prev_row, row)) in self.rows.iter().tuple_windows().enumerate() {
+            row.render_separator(prev_row, &*self.column_widths.borrow(), &self.style, f)?;
 
-                    if max_widths[col_index] < max_col_width {
-                        max_widths[col_index] += 1;
-                    }
-                }
-                if cell.col_span > 1 {
-                    col_index += cell.col_span - 1;
-                } else {
-                    col_index += 1;
-                }
-            }
+            let row_lines = self.row_lines.borrow();
+            row.render_content(
+                &*self.column_widths.borrow(),
+                row_lines[idx + 1],
+                &self.style,
+                f,
+            )?;
         }
+        if self.has_bottom_border {
+            self.rows[self.rows.len() - 1].render_bottom_separator(
+                &*self.column_widths.borrow(),
+                &self.style,
+                f,
+            )?;
+        }
+        Ok(())
+    }
 
-        return max_widths;
+    /// Get the terminal width and use this for the table width.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if it cannot get the terminal width (e.g. because we aren't in a terminal).
+    pub fn for_terminal(&self) -> impl fmt::Display + '_ {
+        FixedWidth {
+            table: self,
+            width: (terminal_size().unwrap().0).0.try_into().unwrap(),
+        }
+    }
+
+    /// Use a custom value for the table width
+    pub fn fixed_width(&self, width: usize) -> impl fmt::Display + '_ {
+        FixedWidth { table: self, width }
+    }
+}
+
+struct FixedWidth<'a> {
+    table: &'a Table<'a>,
+    width: usize,
+}
+
+impl fmt::Display for FixedWidth<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.table.render(Some(self.width), f)
     }
 }
 
 impl<'data> fmt::Display for Table<'data> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let max_widths = self.calculate_max_column_widths();
-        let mut previous_separator = None;
-        if !self.rows.is_empty() {
-            for i in 0..self.rows.len() {
-                let row_pos = if i == 0 {
-                    RowPosition::First
-                } else {
-                    RowPosition::Mid
-                };
-
-                let separator = self.rows[i].gen_separator(
-                    &max_widths,
-                    &self.style,
-                    row_pos,
-                    previous_separator.clone(),
-                );
-
-                previous_separator = Some(separator.clone());
-
-                if self.rows[i].has_separator
-                    && ((i == 0 && self.has_top_border) || i != 0 && self.has_separate_rows)
-                {
-                    writeln!(f, "{}", separator)?;
-                }
-
-                self.rows[i].format(&max_widths, &self.style, f)?;
-            }
-            if self.has_bottom_border {
-                let separator = self.rows.last().unwrap().gen_separator(
-                    &max_widths,
-                    &self.style,
-                    RowPosition::Last,
-                    None,
-                );
-                writeln!(f, "{}", separator)?;
-            }
-        }
-        Ok(())
+        self.render(None, f)
     }
 }
 
-pub fn data_table<'a, R: 'a>(input: impl IntoIterator<Item = &'a R>)
+pub fn data_table<'a, R: 'a>(input: impl IntoIterator<Item = &'a R>) -> Table<'a>
 where
     R: IntoRow,
 {
@@ -577,14 +309,78 @@ where
     for row in input {
         table.add_row(row.into_row());
     }
-    println!("{}", table);
+    table
+}
+
+#[derive(Debug, Clone)]
+struct ColumnWidths(Vec<usize>);
+
+impl ColumnWidths {
+    fn new() -> Self {
+        ColumnWidths(vec![])
+    }
+
+    /// Reset all columns to 0 and make sure there are the correct number of columns.
+    fn reset(&mut self, num_cols: usize) {
+        self.0.clear();
+        self.0.resize(num_cols, 0);
+    }
+
+    fn fit_even_rows(&mut self, total_width: usize, cols: usize, border_width: usize) {
+        // maybe turn this into something other than a panic.
+        assert!(total_width >= border_width * (cols + 1));
+        // there is 1 more border than number of cells.
+        // Take off the border width to get the width of the cell interior.
+        let cell_width = (total_width - border_width) / cols - border_width;
+        let mut used_width = 0;
+        let len = self.0.len();
+        for col in &mut self.0[..len - 1] {
+            *col = cell_width;
+            used_width += cell_width + border_width;
+        }
+        // use remaining space for last cell.
+        self.0[len - 1] = total_width - used_width - 2 * border_width;
+    }
+
+    /// Make our widths fit the given row with all text on a single line.
+    ///
+    /// This is for when we are allowed to use as much space as we want.
+    fn fit_row_singleline(&mut self, row: &Row, border_width: usize) {
+        let mut idx = 0;
+        for cell in row.cells.iter() {
+            if cell.col_span == 1 {
+                self.0[idx] = self.0[idx].max(cell.min_width(true));
+            } else {
+                // space required to fit this cell (taking into account we have some borders to
+                // use).
+                let required_width = cell.min_width(true) - border_width * (cell.col_span - 1);
+                let floor_per_cell = required_width / cell.col_span;
+                // space we need to put somewhere
+                let mut to_fit = required_width % cell.col_span;
+                // split space evenly, with remainder in last space.
+                for i in 0..cell.col_span {
+                    let extra = if to_fit > 0 { 1 } else { 0 };
+                    to_fit = to_fit.saturating_sub(1);
+                    self.0[idx + i] = self.0[idx + 1].max(floor_per_cell + extra);
+                }
+            }
+            idx += cell.col_span;
+        }
+    }
+}
+
+impl std::ops::Deref for ColumnWidths {
+    type Target = [usize];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 #[cfg(test)]
 mod test {
 
+    use crate::cell::{Alignment, Cell};
     use crate::row::Row;
-    use crate::table_cell::{Alignment, TableCell};
     use crate::Table;
     use crate::TableStyle;
     use pretty_assertions::assert_eq;
@@ -596,23 +392,23 @@ mod test {
             .with_style(TableStyle::SIMPLE)
             .with_row(
                 Row::new()
-                    .with_cell(TableCell::from("A").with_alignment(Alignment::Center))
-                    .with_cell(TableCell::from("B").with_alignment(Alignment::Center)),
+                    .with_cell(Cell::from("A").with_alignment(Alignment::Center))
+                    .with_cell(Cell::from("B").with_alignment(Alignment::Center)),
             )
             .with_row(
                 Row::new()
-                    .with_cell(TableCell::from(1.to_string()))
-                    .with_cell(TableCell::from("1")),
+                    .with_cell(Cell::from(1.to_string()))
+                    .with_cell(Cell::from("1")),
             )
             .with_row(
                 Row::new()
-                    .with_cell(TableCell::from(2.to_string()))
-                    .with_cell(TableCell::from("10")),
+                    .with_cell(Cell::from(2.to_string()))
+                    .with_cell(Cell::from("10")),
             )
             .with_row(
                 Row::new()
-                    .with_cell(TableCell::from(3.to_string()))
-                    .with_cell(TableCell::from("100")),
+                    .with_cell(Cell::from(3.to_string()))
+                    .with_cell(Cell::from("100")),
             );
         let expected = r"+---+-----+
 | A |  B  |
@@ -621,8 +417,8 @@ mod test {
 | 3 | 100 |
 +---+-----+
 ";
-        println!("{}", table.render());
-        assert_eq!(expected, table.render());
+        println!("{}", table);
+        assert_eq!(expected, table.to_string());
     }
 
     #[test]
@@ -630,10 +426,10 @@ mod test {
         let table = Table::new()
             .with_separate_rows(false)
             .with_style(TableStyle::SIMPLE)
-            .with_row(Row::new().with_cell(TableCell::from("A").with_alignment(Alignment::Center)))
-            .with_row(Row::new().with_cell(TableCell::from(11.to_string())))
-            .with_row(Row::new().with_cell(TableCell::from(2.to_string())))
-            .with_row(Row::new().with_cell(TableCell::from(3.to_string())));
+            .with_row(Row::new().with_cell(Cell::from("A").with_alignment(Alignment::Center)))
+            .with_row(Row::new().with_cell(Cell::from(11.to_string())))
+            .with_row(Row::new().with_cell(Cell::from(2.to_string())))
+            .with_row(Row::new().with_cell(Cell::from(3.to_string())));
         let expected = r"+-----+
 |  A  |
 | 11  |
@@ -641,8 +437,8 @@ mod test {
 | 3   |
 +-----+
 ";
-        println!("{}", table.render());
-        assert_eq!(expected, table.render());
+        println!("{}", table);
+        assert_eq!(expected, table.to_string());
     }
 
     #[test]
@@ -652,16 +448,15 @@ mod test {
             .with_style(TableStyle::SIMPLE)
             .with_row(
                 Row::new()
-                    .with_cell(TableCell::from("A1").with_alignment(Alignment::Center))
-                    .with_cell(TableCell::from("B").with_alignment(Alignment::Center)),
+                    .with_cell(Cell::from("A1").with_alignment(Alignment::Center))
+                    .with_cell(Cell::from("B").with_alignment(Alignment::Center)),
             );
-        println!("{}", table.render());
+        println!("{}", table);
         let expected = r"+----+---+
 | A1 | B |
 +----+---+
 ";
-        println!("{}", table.render());
-        assert_eq!(expected, table.render());
+        assert_eq!(expected, table.to_string());
     }
 
     #[test]
@@ -681,8 +476,8 @@ mod test {
 | t is going to wrap to the next line                                             |
 +---------------------------------------------------------------------------------+
 ";
-        println!("{}", table.render());
-        assert_eq!(expected, table.render());
+        println!("{}", table);
+        assert_eq!(expected, table.to_string());
     }
 
     #[test]
@@ -693,29 +488,29 @@ mod test {
             .with_style(TableStyle::SIMPLE)
             .with_row(
                 Row::new()
-                    .with_cell(TableCell::from("A1111111").with_alignment(Alignment::Center))
-                    .with_cell(TableCell::from("B").with_alignment(Alignment::Center)),
+                    .with_cell(Cell::from("A1111111").with_alignment(Alignment::Center))
+                    .with_cell(Cell::from("B").with_alignment(Alignment::Center)),
             )
             .with_row(
                 Row::new()
-                    .with_cell(TableCell::from(1.to_string()))
-                    .with_cell(TableCell::from("1")),
+                    .with_cell(Cell::from(1.to_string()))
+                    .with_cell(Cell::from("1")),
             )
             .with_row(
                 Row::new()
-                    .with_cell(TableCell::from(2.to_string()))
-                    .with_cell(TableCell::from("10")),
+                    .with_cell(Cell::from(2.to_string()))
+                    .with_cell(Cell::from("10")),
             )
             .with_row(
                 Row::new()
                     .with_cell(
-                        TableCell::from(3.to_string())
+                        Cell::from(3.to_string())
                             .with_alignment(Alignment::Left)
                             .with_padding(false),
                     )
-                    .with_cell(TableCell::from("100")),
+                    .with_cell(Cell::from("100")),
             )
-            .with_row(Row::new().with_cell(TableCell::from("S").with_alignment(Alignment::Center)));
+            .with_row(Row::new().with_cell(Cell::from("S").with_alignment(Alignment::Center)));
         let expected = "+----------+-----+
 | A1111111 |  B  |
 +----------+-----+
@@ -728,8 +523,8 @@ mod test {
 |        S       |
 +----------------+
 ";
-        println!("{}", table.render());
-        assert_eq!(expected.trim(), table.render().trim());
+        println!("{}", table);
+        assert_eq!(expected.trim(), table.to_string().trim());
     }
 
     // TODO - The output of this test isn't ideal. There is probably a better way to calculate the
@@ -741,27 +536,27 @@ mod test {
             .with_style(TableStyle::SIMPLE)
             .with_row(
                 Row::new()
-                    .with_cell(TableCell::from("A").with_alignment(Alignment::Center))
-                    .with_cell(TableCell::from("B").with_alignment(Alignment::Center)),
+                    .with_cell(Cell::from("A").with_alignment(Alignment::Center))
+                    .with_cell(Cell::from("B").with_alignment(Alignment::Center)),
             )
             .with_row(
                 Row::new()
-                    .with_cell(TableCell::from(1.to_string()))
-                    .with_cell(TableCell::from("1")),
+                    .with_cell(Cell::from(1.to_string()))
+                    .with_cell(Cell::from("1")),
             )
             .with_row(
                 Row::new()
-                    .with_cell(TableCell::from(2.to_string()))
-                    .with_cell(TableCell::from("10")),
+                    .with_cell(Cell::from(2.to_string()))
+                    .with_cell(Cell::from("10")),
             )
             .with_row(
                 Row::new()
-                    .with_cell(TableCell::from(3.to_string()))
-                    .with_cell(TableCell::from("100")),
+                    .with_cell(Cell::from(3.to_string()))
+                    .with_cell(Cell::from("100")),
             )
             .with_row(
                 Row::new().with_cell(
-                    TableCell::from("Spanner")
+                    Cell::from("Spanner")
                         .with_col_span(2)
                         .with_alignment(Alignment::Center),
                 ),
@@ -774,8 +569,8 @@ mod test {
 |   Spanner  |
 +------------+
 ";
-        println!("{}", table.render());
-        assert_eq!(expected.trim(), table.render().trim());
+        println!("{}", table);
+        assert_eq!(expected.trim(), table.to_string().trim());
     }
 
     /*
@@ -787,24 +582,24 @@ mod test {
 
             .with_style ( TableStyle::EXTENDED)
 
-            .with_row(Row::new(vec![TableCell::new_with_alignment(
+            .with_row(Row::new(vec![Cell::new_with_alignment(
                 "This is some centered text",
                 2,
                 Alignment::Center,
             )]))
 
             .with_row(Row::new(vec![
-                TableCell::new("This is left aligned text"),
-                TableCell::new_with_alignment("This is right aligned text", 1, Alignment::Right),
+                Cell::new("This is left aligned text"),
+                Cell::new_with_alignment("This is right aligned text", 1, Alignment::Right),
             ]))
 
             .with_row(Row::new(vec![
-                TableCell::new("This is left aligned text"),
-                TableCell::new_with_alignment("This is right aligned text", 1, Alignment::Right),
+                Cell::new("This is left aligned text"),
+                Cell::new_with_alignment("This is right aligned text", 1, Alignment::Right),
             ]))
 
             .with_row(Row::new(vec![
-                TableCell::new_with_col_span("This is some really really really really really really really really really that is going to wrap to the next line\n1\n2", 2),
+                Cell::new_with_col_span("This is some really really really really really really really really really that is going to wrap to the next line\n1\n2", 2),
             ]));
 
             let expected = r"╔═══════╗
@@ -972,36 +767,36 @@ mod test {
                 let mut table = Table::new();
 
                 table.add_row(Row::new(vec![
-                    TableCell::new_with_col_span("Col*1*Span*2", 2),
-                    TableCell::new("Col 2 Span 1"),
-                    TableCell::new_with_col_span("Col 3 Span 2", 2),
-                    TableCell::new("Col 4 Span 1"),
+                    Cell::new_with_col_span("Col*1*Span*2", 2),
+                    Cell::new("Col 2 Span 1"),
+                    Cell::new_with_col_span("Col 3 Span 2", 2),
+                    Cell::new("Col 4 Span 1"),
                 ]));
                 table.add_row(Row::new(vec![
-                    TableCell::new("Col 1 Span 1"),
-                    TableCell::new("Col 2 Span 1"),
-                    TableCell::new("Col 3 Span 1"),
-                    TableCell::new_with_col_span("Col 4 Span 1", 2),
+                    Cell::new("Col 1 Span 1"),
+                    Cell::new("Col 2 Span 1"),
+                    Cell::new("Col 3 Span 1"),
+                    Cell::new_with_col_span("Col 4 Span 1", 2),
                 ]));
                 table.add_row(Row::new(vec![
-                    TableCell::new("fasdaff"),
-                    TableCell::new("fff"),
-                    TableCell::new("fff"),
+                    Cell::new("fasdaff"),
+                    Cell::new("fff"),
+                    Cell::new("fff"),
                 ]));
                 table.add_row(Row::new(vec![
-                    TableCell::new_with_alignment("fasdff", 3, Alignment::Right),
-                    TableCell::new_with_col_span("fffdff", 4),
+                    Cell::new_with_alignment("fasdff", 3, Alignment::Right),
+                    Cell::new_with_col_span("fffdff", 4),
                 ]));
                 table.add_row(Row::new(vec![
-                    TableCell::new("fasdsaff"),
-                    TableCell::new("fff"),
-                    TableCell::new("f\nf\nf\nfff\nrrr\n\n\n"),
+                    Cell::new("fasdsaff"),
+                    Cell::new("fff"),
+                    Cell::new("f\nf\nf\nfff\nrrr\n\n\n"),
                 ]));
-                table.add_row(Row::new(vec![TableCell::new("fasdsaff")]));
+                table.add_row(Row::new(vec![Cell::new("fasdsaff")]));
 
                 let s = table.render().clone();
 
-                table.add_row(Row::new(vec![TableCell::new_with_alignment(
+                table.add_row(Row::new(vec![Cell::new_with_alignment(
                     s,
                     3,
                     Alignment::Left,
@@ -1144,7 +939,7 @@ mod test {
             #[test]
             fn colored_data_works() {
                 let mut table = Table::new();
-                table.add_row(Row::new(vec![TableCell::new("\u{1b}[31ma\u{1b}[0m")]));
+                table.add_row(Row::new(vec![Cell::new("\u{1b}[31ma\u{1b}[0m")]));
                 let expected = "╔═══╗
         ║ \u{1b}[31ma\u{1b}[0m ║
         ╚═══╝
@@ -1155,10 +950,9 @@ mod test {
         */
 
     fn add_data_to_test_table(table: &mut Table) {
-        table.set_max_column_width(40);
         table.add_row(
             Row::new().with_cell(
-                TableCell::from("This is some centered text")
+                Cell::from("This is some centered text")
                     .with_col_span(2)
                     .with_alignment(Alignment::Center),
             ),
@@ -1166,23 +960,23 @@ mod test {
 
         table.add_row(
             Row::new()
-                .with_cell(TableCell::from("This is left aligned text"))
+                .with_cell(Cell::from("This is left aligned text"))
                 .with_cell(
-                    TableCell::from("This is right aligned text").with_alignment(Alignment::Right),
+                    Cell::from("This is right aligned text").with_alignment(Alignment::Right),
                 ),
         );
 
         table.add_row(
             Row::new()
-                .with_cell(TableCell::from("This is left aligned text"))
+                .with_cell(Cell::from("This is left aligned text"))
                 .with_cell(
-                    TableCell::from("This is right aligned text").with_alignment(Alignment::Right),
+                    Cell::from("This is right aligned text").with_alignment(Alignment::Right),
                 ),
         );
 
         table.add_row(
             Row::new().with_cell(
-                TableCell::from(
+                Cell::from(
                     "This is some really really really really really \
                 really really really really that is going to wrap to the next line",
                 )
