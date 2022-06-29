@@ -20,5 +20,5 @@ impl MyData<String> {
 fn main() {
     let data = vec![MyData::new("John Doe", 28), MyData::new("Jane Foo", 72)];
 
-    term_data_table::data_table(&data)
+    println!("{}", term_data_table::data_table(&data))
 }

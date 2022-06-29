@@ -5,7 +5,6 @@
 //! use term_data_table::{ Table, Cell, TableStyle, Alignment, Row };
 //!
 //! let table = Table::new()
-//!     .with_max_column_width(40)
 //!     .with_style(TableStyle::EXTENDED)
 //!     .with_row(Row::new().with_cell(
 //!         Cell::from("This is some centered text")
@@ -28,7 +27,7 @@
 //!         Cell::from("This is some really really really really really really really really really that is going to wrap to the next line")
 //!             .with_col_span(2)
 //!     ));
-//!println!("{}", table.render());
+//!println!("{}", table.fixed_width(80));
 //!```
 //!
 //!### This is the result
@@ -246,7 +245,9 @@ impl<'data> Table<'data> {
         self.rows[0].render_content(&*self.column_widths.borrow(), row_lines[0], &self.style, f)?;
 
         for (idx, (prev_row, row)) in self.rows.iter().tuple_windows().enumerate() {
-            row.render_separator(prev_row, &*self.column_widths.borrow(), &self.style, f)?;
+            if self.has_separate_rows {
+                row.render_separator(prev_row, &*self.column_widths.borrow(), &self.style, f)?;
+            }
 
             let row_lines = self.row_lines.borrow();
             row.render_content(
@@ -430,12 +431,12 @@ mod test {
             .with_row(Row::new().with_cell(Cell::from(11.to_string())))
             .with_row(Row::new().with_cell(Cell::from(2.to_string())))
             .with_row(Row::new().with_cell(Cell::from(3.to_string())));
-        let expected = r"+-----+
-|  A  |
-| 11  |
-| 2   |
-| 3   |
-+-----+
+        let expected = r"+----+
+| A  |
+| 11 |
+| 2  |
+| 3  |
++----+
 ";
         println!("{}", table);
         assert_eq!(expected, table.to_string());
@@ -465,17 +466,18 @@ mod test {
 
         add_data_to_test_table(&mut table);
 
-        let expected = r"+---------------------------------------------------------------------------------+
-|                            This is some centered text                           |
-+----------------------------------------+----------------------------------------+
-| This is left aligned text              |             This is right aligned text |
-+----------------------------------------+----------------------------------------+
-| This is left aligned text              |             This is right aligned text |
-+----------------------------------------+----------------------------------------+
-| This is some really really really really really really really really really tha |
-| t is going to wrap to the next line                                             |
-+---------------------------------------------------------------------------------+
+        let expected = r"+------------------------------------------------------------------------------+
+|                          This is some centered text                          |
++--------------------------------------+---------------------------------------+
+| This is left aligned text            |            This is right aligned text |
++--------------------------------------+---------------------------------------+
+| This is left aligned text            |            This is right aligned text |
++--------------------------------------+---------------------------------------+
+| This is some really really really really really really really really really  |
+| that is going to wrap to the next line                                       |
++------------------------------------------------------------------------------+
 ";
+        let table = table.fixed_width(80);
         println!("{}", table);
         assert_eq!(expected, table.to_string());
     }
@@ -561,13 +563,13 @@ mod test {
                         .with_alignment(Alignment::Center),
                 ),
             );
-        let expected = "+------+-----+
-|   A  |  B  |
-| 1    | 1   |
-| 2    | 10  |
-| 3    | 100 |
-|   Spanner  |
-+------------+
+        let expected = "+-----+-----+
+|  A  |  B  |
+| 1   | 1   |
+| 2   | 10  |
+| 3   | 100 |
+|  Spanner  |
++-----------+
 ";
         println!("{}", table);
         assert_eq!(expected.trim(), table.to_string().trim());

@@ -118,7 +118,7 @@ impl IntoRowFields {
                 quote! {
                     ::term_data_table::Row::new()
                     #(
-                        .with_cell(::term_data_table::TableCell::from(#idents))
+                        .with_cell(::term_data_table::Cell::from(#idents))
                     )*
                 }
             }
@@ -127,7 +127,7 @@ impl IntoRowFields {
                 quote! {
                     ::term_data_table::Row::new()
                     #(
-                        .with_cell(::term_data_table::TableCell::from(#idents))
+                        .with_cell(::term_data_table::Cell::from(#idents))
                     )*
                 }
             }
@@ -141,7 +141,7 @@ impl IntoRowFields {
                 quote! {
                     ::term_data_table::Row::new()
                     #(
-                        .with_cell(::term_data_table::TableCell::from(self.#idents.to_string()))
+                        .with_cell(::term_data_table::Cell::from(self.#idents.to_string()))
                     )*
                 }
             }
@@ -150,7 +150,7 @@ impl IntoRowFields {
                 quote! {
                     ::term_data_table::Row::new()
                     #(
-                        .with_cell(::term_data_table::TableCell::from(self.#idents.to_string()))
+                        .with_cell(::term_data_table::Cell::from(self.#idents.to_string()))
                     )*
                 }
             }

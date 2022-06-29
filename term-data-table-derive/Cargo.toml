@@ -1,7 +1,11 @@
 [package]
 name = "term-data-table-derive"
+description = "Derive macros for `term-data-table`"
+author = ["Richard Dodd <richard.o.dodd@gmail.com>"]
 version = "0.1.0"
 edition = "2021"
+license = "MIT/Apache-2.0"
+repository = "https://github.com/drerekdreery/term-data-table"
 
 [lib]
 proc-macro = true
