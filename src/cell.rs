@@ -2,6 +2,7 @@ use itertools::Itertools;
 use lazy_static;
 use regex::Regex;
 use std::{borrow::Cow, cell::RefCell, fmt, iter};
+use unicode_width::UnicodeWidthChar;
 
 use unicode_linebreak::{linebreaks, BreakOpportunity};
 use unicode_width::UnicodeWidthStr;
@@ -151,7 +152,11 @@ impl<'txt> Cell<'txt> {
         if width < 1 || (self.pad_content && width < 3) {
             panic!("cell too small to show anything");
         }
-        let content_width = if self.pad_content { width - 2 } else { width };
+        let content_width = if self.pad_content {
+            width.saturating_sub(2)
+        } else {
+            width
+        };
         let mut ln = self.layout_newlines.borrow_mut();
         let ln = ln.get_or_insert(vec![]);
         ln.clear();
@@ -159,68 +164,15 @@ impl<'txt> Cell<'txt> {
 
         let mut s = self.content_for_layout();
         // Go through potential linebreak locations to find where we should break.
-        let mut prev_idx = None;
-        let mut offset = 0;
-        'outer: for (ch_idx, ty) in without_last(linebreaks(s)) {
-            //println!("{:?} > {:?}", ch_idx, ty);
-            if s[..ch_idx - offset].width() > content_width {
-                // We're now too big, so go back to the previous idx and use that.
-                match prev_idx {
-                    Some(idx) => {
-                        ln.push(idx);
-                        offset += idx;
-                        s = &s[idx..];
-                        prev_idx = None;
-                        continue;
-                    }
-                    // if there is no previous idx, there is no string length that can fit
-                    // and so we give up on using breaks and just try lengths of characters
-                    None => {
-                        for (ch_idx, _) in s.char_indices() {
-                            if s[..ch_idx].width() > content_width {
-                                match prev_idx {
-                                    Some(idx) => {
-                                        ln.push(idx);
-                                        offset += idx;
-                                        s = &s[idx..];
-                                        prev_idx = None;
-                                        continue;
-                                    }
-                                    // If this method failed, fallback to 1 char per line.
-                                    None => {
-                                        // we've failed to layout (because the width is very
-                                        // small), so display 1 char per line to be deterministic.
-                                        ln.clear();
-                                        for (idx, _) in
-                                            self.content_for_layout().char_indices().skip(1)
-                                        {
-                                            ln.push(idx);
-                                        }
-                                        break 'outer;
-                                    }
-                                }
-                            }
-                            prev_idx = Some(ch_idx);
-                        }
-                        // If we got here, it means we got to the end of the string, but
-                        // this should be impossible since the linebreaks approach failed,
-                        // so mark as unreachable
-                        unreachable!()
-                    }
-                }
-            }
-            if matches!(ty, BreakOpportunity::Mandatory) {
-                // we need to break here irrespective of length (if we got this far we know
-                // we are not too long)
-                ln.push(ch_idx);
-                offset += ch_idx;
-                s = &s[ch_idx..];
-                prev_idx = None;
-                continue;
-            }
-            prev_idx = Some(ch_idx);
+        let mut acc = 0;
+        while let Some(idx) = next_linebreak(s, content_width) {
+            s = &s[idx..];
+            ln.push(idx + acc);
+            acc += idx;
         }
-        // If we got here, we've laid out the whole string.
+        // the above method always ends the text with a newline, so pop it.
+        ln.pop();
+        // return number of lines
         ln.len()
     }
 
@@ -303,8 +255,8 @@ impl<'txt> Cell<'txt> {
     ///
     /// line_width includes padding spaces
     fn get_padding(&self, width: usize, line_width: usize) -> (usize, usize) {
-        assert!(width >= line_width + 2);
-        let gap = width - line_width - 2;
+        let padding = if self.pad_content { 2 } else { 0 };
+        let gap = (width - line_width).saturating_sub(padding);
         match self.alignment {
             Alignment::Left => (0, gap),
             Alignment::Center => (gap / 2, gap - gap / 2),
@@ -347,21 +299,23 @@ lazy_static! {
             .unwrap();
 }
 
-fn without_last<T>(input: impl Iterator<Item = T>) -> impl Iterator<Item = T> {
-    struct WithoutLast<T, I: Iterator<Item = T>>(std::iter::Peekable<I>);
-    impl<T, I> Iterator for WithoutLast<T, I>
-    where
-        I: Iterator<Item = T>,
-    {
-        type Item = T;
-        fn next(&mut self) -> Option<Self::Item> {
-            let next = self.0.next();
-            if self.0.peek().is_none() {
-                None
+/// Find where to put the next linebreak, or return None if we don't need any more.
+fn next_linebreak(text: &str, max_width: usize) -> Option<usize> {
+    let mut prev = None;
+    for (idx, ty) in linebreaks(text) {
+        if text[..idx].width() > max_width {
+            // use the previous linebreak or 1 char as a backup.
+            return if let Some(prev) = prev {
+                Some(prev)
             } else {
-                next
-            }
+                text.chars().next().map(|ch| ch.width()).flatten()
+            };
+        } else if matches!(ty, BreakOpportunity::Mandatory) {
+            // we must insert a linebreak here
+            return Some(idx);
+        } else {
+            prev = Some(idx);
         }
     }
-    WithoutLast(input.peekable())
+    None
 }
