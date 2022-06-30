@@ -50,6 +50,7 @@ extern crate lazy_static;
 
 mod cell;
 mod row;
+mod ser;
 mod style;
 
 pub use crate::{
@@ -62,6 +63,7 @@ pub use crate::{
 pub use term_data_table_derive::IntoRow;
 
 use itertools::Itertools;
+use serde::Serialize;
 use std::{cell::RefCell, fmt};
 use terminal_size::terminal_size;
 
@@ -125,6 +127,14 @@ impl<'data> Table<'data> {
             rows,
             ..Default::default()
         }
+    }
+
+    pub fn from_serde(data: impl IntoIterator<Item = impl Serialize>) -> anyhow::Result<Self> {
+        let mut table = Table::new();
+        for row in data {
+            table.add_row(ser::serialize_row(row)?);
+        }
+        Ok(table)
     }
 
     /// Add a row
@@ -475,6 +485,9 @@ mod test {
 +--------------------------------------+---------------------------------------+
 | This is some really really really really really really really really really  |
 | that is going to wrap to the next line                                       |
++------------------------------------------------------------------------------+
+| aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa |
+| aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa                                       |
 +------------------------------------------------------------------------------+
 ";
         let table = table.fixed_width(80);
@@ -981,6 +994,16 @@ mod test {
                 Cell::from(
                     "This is some really really really really really \
                 really really really really that is going to wrap to the next line",
+                )
+                .with_col_span(2),
+            ),
+        );
+
+        table.add_row(
+            Row::new().with_cell(
+                Cell::from(
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+                    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 )
                 .with_col_span(2),
             ),

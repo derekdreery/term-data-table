@@ -1,6 +1,6 @@
 [package]
 name = "term-data-table"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Ryan Bluth <ryanbluth93@gmail.com>", "Richard Dodd <richard.o.dodd@gmail.com>"]
 description = "Tables to render data in CLI apps"
 license = "MIT"
@@ -19,9 +19,13 @@ term-data-table-derive = { version = "0.1.0", path = "term-data-table-derive" }
 unicode-linebreak = "0.1.2"
 itertools = "0.10.3"
 terminal_size = "0.1.17"
+serde = "1.0.137"
+anyhow = "1.0.58"
+serde_json = "1.0.82"
 
 [dev-dependencies]
 pretty_assertions = "0.6.1"
+serde = { version = "1.0.137", features = ["derive"] }
 
 [workspace]
 members = [".", "term-data-table-derive"]

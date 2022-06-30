@@ -304,12 +304,16 @@ fn next_linebreak(text: &str, max_width: usize) -> Option<usize> {
     let mut prev = None;
     for (idx, ty) in linebreaks(text) {
         if text[..idx].width() > max_width {
-            // use the previous linebreak or 1 char as a backup.
-            return if let Some(prev) = prev {
-                Some(prev)
-            } else {
-                text.chars().next().map(|ch| ch.width()).flatten()
+            // first use the previous linebreak if there is one
+            if let Some(prev) = prev {
+                return Some(prev);
             };
+            // next, find a character break
+            if let Some(linebreak) = next_linebreak_midword(text, max_width) {
+                return Some(linebreak);
+            }
+            // finally, do 1 char per line to be deterministic (we have a very narrow cell)
+            return text.chars().next().map(|ch| ch.width()).flatten();
         } else if matches!(ty, BreakOpportunity::Mandatory) {
             // we must insert a linebreak here
             return Some(idx);
@@ -318,4 +322,19 @@ fn next_linebreak(text: &str, max_width: usize) -> Option<usize> {
         }
     }
     None
+}
+
+// TODO use midpoint-based search
+fn next_linebreak_midword(text: &str, max_width: usize) -> Option<usize> {
+    let mut prev = None;
+    for (idx, _) in text.char_indices() {
+        if text[..idx].width() > max_width {
+            return prev;
+        } else {
+            prev = Some(idx);
+        }
+    }
+    // we should not reach here, because we already found a potential breakpoint that was too big
+    // for the line.
+    unreachable!()
 }
