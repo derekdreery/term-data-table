@@ -141,7 +141,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_none(self) -> Result<()> {
-        self.serialize_unit()
+        self.serialize_static_str("")
     }
 
     fn serialize_some<T>(self, value: &T) -> Result<()>
@@ -152,7 +152,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_unit(self) -> Result<()> {
-        // Don't serialize anything
+        // Skip field
         Ok(())
     }
 
