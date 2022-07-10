@@ -324,9 +324,12 @@ impl<'data> Table<'data> {
     ///
     /// Will panic if it cannot get the terminal width (e.g. because we aren't in a terminal).
     pub fn for_terminal(&self) -> impl fmt::Display + '_ {
-        FixedWidth {
-            table: self,
-            width: (terminal_size().unwrap().0).0.try_into().unwrap(),
+        match terminal_size().and_then(|v| usize::try_from((v.0).0).ok()) {
+            Some(width) => FixedWidth { table: self, width },
+            None => FixedWidth {
+                table: self,
+                width: usize::MAX,
+            },
         }
     }
 

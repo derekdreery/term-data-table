@@ -1,6 +1,6 @@
 [package]
 name = "term-data-table"
-version = "0.2.2"
+version = "0.2.3"
 authors = ["Ryan Bluth <ryanbluth93@gmail.com>", "Richard Dodd <richard.o.dodd@gmail.com>"]
 description = "Tables to render data in CLI apps"
 license = "MIT"
