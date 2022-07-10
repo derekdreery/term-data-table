@@ -64,8 +64,14 @@ pub use term_data_table_derive::IntoRow;
 
 use itertools::Itertools;
 use serde::Serialize;
-use std::{cell::RefCell, fmt};
+use std::{cell::RefCell, collections::HashMap, fmt};
 use terminal_size::terminal_size;
+
+thread_local! {
+    /// Used to calculate the maximum width of table cells.
+    static MAX_WIDTHS_CELL_WIDTHS: RefCell<(ColumnWidths, HashMap<usize, usize>)>
+        = RefCell::new((ColumnWidths::new(), HashMap::new()));
+}
 
 /// Represents the vertical position of a row
 #[derive(Eq, PartialEq, Copy, Clone)]
@@ -219,9 +225,44 @@ impl<'data> Table<'data> {
         }
 
         if let Some(width) = width {
-            // For now, just give each cell the same amount of space. In the future, it might be
-            // possible to give more space to cells that need it (based on their min_width).
-            col_widths.fit_even_rows(width, cols, border_width);
+            // total space available for drawing text
+            let cell_width_total = width - (border_width + 1) * cols;
+
+            MAX_WIDTHS_CELL_WIDTHS.with(|lk| {
+                let (ref mut max_widths, ref mut cell_widths) = &mut *lk.borrow_mut();
+                // reset
+                max_widths.reset(cols);
+                cell_widths.clear();
+
+                // first stash the max space each column will need.
+                for row in self.rows.iter() {
+                    max_widths.fit_row_singleline(row, border_width);
+                }
+
+                // Next, calculate the width we would give each cell if we were splitting space
+                // evenly
+                let cell_width = cell_width_total / cols;
+
+                // Next, find all cells with max width less than the cell width we calculated and
+                // give them their max width
+                for (idx, max_width) in max_widths.iter().enumerate() {
+                    if *max_width < cell_width {
+                        cell_widths.insert(idx, *max_width);
+                    }
+                }
+
+                let remaining_cells = cols - cell_widths.len();
+                let remaining_space =
+                    cell_width_total - cell_widths.values().copied().sum::<usize>();
+                if remaining_cells > 0 {
+                    let cell_width = remaining_space / remaining_cells;
+                    for idx in 0..cols {
+                        cell_widths.entry(idx).or_insert(cell_width);
+                    }
+                }
+
+                col_widths.from_map(cell_widths);
+            });
         } else {
             // Give all cells all the space they need.
             for row in self.rows.iter() {
@@ -337,22 +378,6 @@ impl ColumnWidths {
         self.0.resize(num_cols, 0);
     }
 
-    fn fit_even_rows(&mut self, total_width: usize, cols: usize, border_width: usize) {
-        // maybe turn this into something other than a panic.
-        assert!(total_width >= border_width * (cols + 1));
-        // there is 1 more border than number of cells.
-        // Take off the border width to get the width of the cell interior.
-        let cell_width = (total_width - border_width) / cols - border_width;
-        let mut used_width = 0;
-        let len = self.0.len();
-        for col in &mut self.0[..len - 1] {
-            *col = cell_width;
-            used_width += cell_width + border_width;
-        }
-        // use remaining space for last cell.
-        self.0[len - 1] = total_width - used_width - 2 * border_width;
-    }
-
     /// Make our widths fit the given row with all text on a single line.
     ///
     /// This is for when we are allowed to use as much space as we want.
@@ -376,6 +401,12 @@ impl ColumnWidths {
                 }
             }
             idx += cell.col_span;
+        }
+    }
+
+    fn from_map(&mut self, map: &HashMap<usize, usize>) {
+        for (idx, slot) in self.0.iter_mut().enumerate() {
+            *slot = *map.get(&idx).unwrap();
         }
     }
 }
@@ -476,22 +507,22 @@ mod test {
 
         add_data_to_test_table(&mut table);
 
-        let expected = r"+------------------------------------------------------------------------------+
-|                          This is some centered text                          |
-+--------------------------------------+---------------------------------------+
-| This is left aligned text            |            This is right aligned text |
-+--------------------------------------+---------------------------------------+
-| This is left aligned text            |            This is right aligned text |
-+--------------------------------------+---------------------------------------+
-| This is some really really really really really really really really really  |
-| that is going to wrap to the next line                                       |
-+------------------------------------------------------------------------------+
-| aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa |
-| aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa                                       |
-+------------------------------------------------------------------------------+
+        let expected = r"+-----------------------------------------------------------------------------+
+|                         This is some centered text                          |
++--------------------------------------+--------------------------------------+
+| This is left aligned text            |           This is right aligned text |
++--------------------------------------+--------------------------------------+
+| This is left aligned text            |           This is right aligned text |
++--------------------------------------+--------------------------------------+
+| This is some really really really really really really really really        |
+| really that is going to wrap to the next line                               |
++-----------------------------------------------------------------------------+
+| aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa |
+| aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa                                     |
++-----------------------------------------------------------------------------+
 ";
         let table = table.fixed_width(80);
-        println!("{}", table);
+        println!("{}", table.to_string());
         assert_eq!(expected, table.to_string());
     }
 
