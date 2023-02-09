@@ -150,7 +150,7 @@ impl<'txt> Cell<'txt> {
         // We can just pretend we have loads of space - we only calculate linebreaks here.
         let width = width.unwrap_or(usize::MAX);
         if width < 1 || (self.pad_content && width < 3) {
-            panic!("cell too small to show anything");
+            panic!("cell too small to show anything (width = {width})");
         }
         let content_width = if self.pad_content {
             width.saturating_sub(2)
