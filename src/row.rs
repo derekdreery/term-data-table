@@ -59,7 +59,7 @@ impl<'data> Row<'data> {
         let mut idx = 0;
         for cell in self.cells.iter() {
             // start with the extra space for borders
-            let mut width = (cell.col_span - 1) * border_width;
+            let mut width = (cell.col_span + 1) * border_width;
 
             // add in space for cell content.
             for w in column_widths[idx..idx + cell.col_span].iter().copied() {
