@@ -35,7 +35,7 @@ impl serde::ser::Error for Error {
     where
         T: fmt::Display,
     {
-        Error(anyhow!("{}", msg))
+        Error(anyhow!("{msg}"))
     }
 }
 
@@ -289,7 +289,7 @@ impl<'a> SerializerSeq<'a> {
             output: if prefix.is_empty() {
                 format!("{}", ty.start())
             } else {
-                format!("{} {}", prefix, ty.start())
+                format!("{prefix} {}", ty.start())
             },
         }
     }
